@@ -121,6 +121,8 @@ systemctl restart dhcpcd || true
 ip link set wlan0 up || true
 
 # Restart hostapd cleanly
+systemctl unmask hostapd
+systemctl enable hostapd
 systemctl restart hostapd
 sleep 3
 
@@ -170,3 +172,5 @@ read -p "Jetzt neustarten? (y/N): " ANS
 if [[ "$ANS" =~ ^[Yy]$ ]]; then
   reboot
 fi
+
+
