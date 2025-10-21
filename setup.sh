@@ -52,7 +52,12 @@ if [ ! -f /lib/firmware/mediatek/mt7601u.bin ]; then
   ln -sf /lib/firmware/mediatek/mt7601u.bin /lib/firmware/mt7601u.bin
 fi
 
+
+
 # --- 5. AP- und DNS-Konfiguration ---
+
+iw reg set DE
+
 cat > /etc/dhcpcd.conf <<'EOF'
 interface wlan0
     static ip_address=192.168.4.1/24
@@ -103,6 +108,35 @@ EOF
 
 systemctl daemon-reload
 systemctl enable wlan1-up.service
+
+
+# --- Fix Wi-Fi interface roles (wlan0 = AP, wlan1 = Internet) ---
+
+# Stop any running wpa_supplicant instance that might have grabbed wlan0
+systemctl stop wpa_supplicant@wlan0.service || true
+systemctl disable wpa_supplicant@wlan0.service || true
+killall wpa_supplicant || true
+
+# Ensure wlan0 has static IP and no wpa_supplicant hook
+cat > /etc/dhcpcd.conf <<'EOF'
+interface wlan0
+    static ip_address=192.168.4.1/24
+    nohook wpa_supplicant
+EOF
+
+# Restart DHCP client to apply
+systemctl restart dhcpcd || true
+
+# Make sure wlan0 is up and hostapd can claim it
+ip link set wlan0 up || true
+
+# Restart hostapd cleanly
+systemctl restart hostapd
+sleep 3
+
+# Verify that wlan0 is in AP mode (for logging/debug)
+iw dev wlan0 info || true
+
 
 # --- 7. TeddyCloud Binary bauen (nur Binary!) ---
 if [ ! -d /opt/teddycloud ]; then
