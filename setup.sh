@@ -1,11 +1,7 @@
 #!/bin/bash
 set -e
 
-### TeddyCloud AP Setup für Raspberry Pi OS Lite (64-bit)
-### Nutzt WLAN-Daten, die der Raspberry Pi Imager bereits geschrieben hat.
-### Kein Passwort oder SSID im Script oder Repo.
-
-echo "=== TeddyCloud Access-Point Setup (mit Imager-WLAN-Konfiguration) ==="
+echo "=== TeddyCloud Access-Point Setup (mit Imager-WLAN) ==="
 
 # --- Root Check ---
 if [ "$EUID" -ne 0 ]; then
@@ -14,16 +10,13 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # --- 1. System Update & Cleanup ---
-echo "System aktualisieren und unnötige Pakete entfernen..."
 apt update
 apt full-upgrade -y
-
 apt purge -y triggerhappy dphys-swapfile avahi-daemon cups \
   rpcbind nfs-common samba* bluez* x11-* lightdm libreoffice* \
   wolfram-engine chromium* || true
 apt autoremove -y
 apt clean
-
 systemctl disable apt-daily.service apt-daily.timer apt-daily-upgrade.timer man-db.timer || true
 
 # --- 2. WLAN-Config vom Imager übernehmen ---
@@ -39,25 +32,20 @@ fi
 SSID=$(grep -oP 'ssid="\K[^"]+' "$IMAGER_CONF" || true)
 COUNTRY=$(grep -oP 'country=\K[A-Z]+' "$IMAGER_CONF" || echo "DE")
 
-if [ -z "$SSID" ]; then
-  echo "Warnung: Keine SSID in $IMAGER_CONF gefunden."
-else
-  echo "Nutze vorhandene WLAN-Konfiguration (SSID=$SSID, COUNTRY=$COUNTRY)"
-fi
-
+echo "Verwende WLAN-SSID=$SSID, COUNTRY=$COUNTRY"
 cp "$IMAGER_CONF" "$WLAN1_CONF"
 chmod 600 "$WLAN1_CONF"
 
 # --- 3. Notwendige Pakete installieren ---
-apt install -y hostapd dnsmasq git cmake build-essential \
+apt install -y hostapd dnsmasq git build-essential \
   libssl-dev libcurl4-openssl-dev libpugixml-dev libspdlog-dev \
-  zlib1g-dev libmicrohttpd-dev wget dhcpcd5 isc-dhcp-client
+  zlib1g-dev libmicrohttpd-dev wget dhcpcd5 isc-dhcp-client \
+  protobuf-c-compiler libprotobuf-c-dev faketime npm nodejs
 
 systemctl stop hostapd || true
 systemctl stop dnsmasq || true
 
 # --- 4. Firmware für MT7601 installieren ---
-echo "Installiere Firmware für MT7601U (externe Antenne)..."
 mkdir -p /lib/firmware/mediatek
 if [ ! -f /lib/firmware/mediatek/mt7601u.bin ]; then
   wget -q -O /lib/firmware/mediatek/mt7601u.bin \
@@ -66,7 +54,6 @@ if [ ! -f /lib/firmware/mediatek/mt7601u.bin ]; then
 fi
 
 # --- 5. AP- und DNS-Konfiguration ---
-echo "Richte wlan0 als Access Point ein..."
 cat > /etc/dhcpcd.conf <<'EOF'
 interface wlan0
     static ip_address=192.168.4.1/24
@@ -119,25 +106,24 @@ systemctl daemon-reload
 systemctl enable wlan1-up.service
 
 # --- 7. TeddyCloud installieren ---
-echo "Installiere TeddyCloud (nativ, inklusive Submodule und Build)..."
 if [ ! -d /opt/teddycloud ]; then
-  git clone --recurse-submodules https://github.com/toniebox-reverse-engineering/teddycloud.git /opt/teddycloud
+  git clone https://github.com/toniebox-reverse-engineering/teddycloud.git /opt/teddycloud
 fi
 
 cd /opt/teddycloud
 git submodule update --init --recursive
 
-# Build im separaten Ordner
-mkdir -p build
-cd build
-cmake ..
+# Build TeddyCloud und Web
+make clean || true
 make -j$(nproc)
-make install
 
-# Konfiguration TeddyCloud
-mkdir -p /etc/teddycloud
-cp /opt/teddycloud/config/config.json /etc/teddycloud/config.json || true
+# Binary und Web kopieren
+sudo cp teddycloud /usr/local/bin/teddycloud
+sudo mkdir -p /etc/teddycloud/web
+sudo cp -r teddycloud_web/* /etc/teddycloud/web/
+sudo cp -r config/* /etc/teddycloud/
 
+# --- 8. Systemd-Service ---
 cat > /etc/systemd/system/teddycloud.service <<'EOF'
 [Unit]
 Description=TeddyCloud Server
@@ -154,15 +140,15 @@ EOF
 
 systemctl enable teddycloud.service
 
-# --- 8. Dienste aktivieren ---
+# --- 9. Dienste aktivieren ---
 systemctl unmask hostapd
 systemctl enable hostapd
 systemctl enable dnsmasq
 
 echo "=== ✅ Setup abgeschlossen ==="
-echo "Pi startet nun als Access Point (wlan0=PiCloud) mit DNS-Rewrite."
-echo "Interner WLAN (wlan1) nutzt dein Imager-WLAN für Internetzugang."
-echo "Kein NAT aktiv."
+echo "AP: wlan0=PiCloud, DNS-Rewrite aktiv."
+echo "WLAN1 nutzt dein Imager-WLAN für Internetzugang."
+echo "Kein NAT."
 
 read -p "Jetzt neustarten? (y/N): " ANS
 if [[ "$ANS" =~ ^[Yy]$ ]]; then
