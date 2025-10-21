@@ -1,0 +1,12 @@
+[Unit]
+Description=TeddyCloud Server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/teddycloud --config /etc/teddycloud/config.json
+Restart=always
+User=root
+WorkingDirectory=/etc/teddycloud
+
+[Install]
+WantedBy=multi-user.target

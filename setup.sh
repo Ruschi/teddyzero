@@ -1,6 +1,37 @@
 #!/bin/bash
 set -e
 
+# Config source: use local ./config/ if present else download from GitHub raw
+# Set your config repo raw base here:
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/Ruschi/teddyzero/refs/heads/main/config"
+
+fetch_or_copy() {
+  local name="$1"
+  local dest="$2"
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local local_path="$script_dir/config/$name"
+
+  if [ -f "$local_path" ]; then
+    echo "Using local config $local_path -> $dest"
+    install -m 644 "$local_path" "$dest"
+  elif [ -n "$GITHUB_RAW_BASE" ]; then
+    echo "Downloading $name from $GITHUB_RAW_BASE -> $dest"
+    mkdir -p "$(dirname "$dest")"
+    wget -q -O "$dest" "$GITHUB_RAW_BASE/$name"
+    chmod 644 "$dest" || true
+  else
+    echo "Fehler: Konfigurationsdatei $name nicht gefunden und GITHUB_RAW_BASE nicht gesetzt."
+    exit 1
+  fi
+
+  # Replace placeholders for COUNTRY if present
+  if grep -q "\\$\\{COUNTRY\\}" "$dest" 2>/dev/null || grep -q "__COUNTRY__" "$dest" 2>/dev/null; then
+    sed -i "s|\\$\\{COUNTRY\\}|${COUNTRY}|g" "$dest" || true
+    sed -i "s|__COUNTRY__|${COUNTRY}|g" "$dest" || true
+  fi
+}
+
 echo "=== TeddyCloud Pi Zero W2 Setup ==="
 
 # --- Root Check ---
@@ -52,63 +83,26 @@ if [ ! -f /lib/firmware/mediatek/mt7601u.bin ]; then
   ln -sf /lib/firmware/mediatek/mt7601u.bin /lib/firmware/mt7601u.bin
 fi
 
-
-
 # --- 5. AP- und DNS-Konfiguration ---
 
 iw reg set DE
 
-cat > /etc/dhcpcd.conf <<'EOF'
-interface wlan0
-    static ip_address=192.168.4.1/24
-    nohook wpa_supplicant
-EOF
+# Write dhcpcd.conf (from config folder or GitHub)
+fetch_or_copy "dhcpcd.conf" "/etc/dhcpcd.conf"
 
-cat > /etc/hostapd/hostapd.conf <<EOF
-interface=wlan0
-driver=nl80211
-ssid=PiCloud
-hw_mode=g
-channel=6
-wmm_enabled=0
-auth_algs=1
-ignore_broadcast_ssid=0
-country_code=${COUNTRY}
-EOF
+# hostapd config
+mkdir -p /etc/hostapd
+fetch_or_copy "hostapd.conf" "/etc/hostapd/hostapd.conf"
 sed -i 's|#DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
 
 mv /etc/dnsmasq.conf /etc/dnsmasq.conf.orig || true
-cat > /etc/dnsmasq.conf <<'EOF'
-interface=wlan0
-bind-interfaces
-server=8.8.8.8
-domain-needed
-bogus-priv
-dhcp-range=192.168.4.10,192.168.4.100,255.255.255.0,24h
-dhcp-option=3,192.168.4.1
-dhcp-option=6,192.168.4.1
-address=/#/192.168.4.1
-EOF
+fetch_or_copy "dnsmasq.conf" "/etc/dnsmasq.conf"
 
 # --- 6. wlan1 hochfahren (kein NAT) ---
-cat > /etc/systemd/system/wlan1-up.service <<'EOF'
-[Unit]
-Description=Bring up wlan1 using existing wpa_supplicant config
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/sbin/wpa_supplicant -B -i wlan1 -c /etc/wpa_supplicant/wpa_supplicant-wlan1.conf
-ExecStartPost=/sbin/dhclient wlan1
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
+fetch_or_copy "wlan1-up.service" "/etc/systemd/system/wlan1-up.service"
 
 systemctl daemon-reload
 systemctl enable wlan1-up.service
-
 
 # --- Fix Wi-Fi interface roles (wlan0 = AP, wlan1 = Internet) ---
 
@@ -118,11 +112,7 @@ systemctl disable wpa_supplicant@wlan0.service || true
 killall wpa_supplicant || true
 
 # Ensure wlan0 has static IP and no wpa_supplicant hook
-cat > /etc/dhcpcd.conf <<'EOF'
-interface wlan0
-    static ip_address=192.168.4.1/24
-    nohook wpa_supplicant
-EOF
+fetch_or_copy "dhcpcd.conf" "/etc/dhcpcd.conf"
 
 # Restart DHCP client to apply
 systemctl restart dhcpcd || true
@@ -137,7 +127,6 @@ sleep 3
 # Verify that wlan0 is in AP mode (for logging/debug)
 iw dev wlan0 info || true
 
-
 # --- 7. TeddyCloud Binary bauen (nur Binary!) ---
 if [ ! -d /opt/teddycloud ]; then
   git clone https://github.com/toniebox-reverse-engineering/teddycloud.git /opt/teddycloud
@@ -146,14 +135,11 @@ fi
 cd /opt/teddycloud
 git submodule update --init --recursive
 
-
 # Binary bauen
 make -j$(nproc) bin/teddycloud
 
-
 sudo cp bin/teddycloud /usr/local/bin/teddycloud
 sudo chmod +x /usr/local/bin/teddycloud
-
 
 # --- 8. Fertige Web-App herunterladen und installieren ---
 WEB_URL="https://github.com/Ruschi/teddycloud_web/releases/latest/download/web-build.zip"
@@ -166,20 +152,7 @@ rm /tmp/web-build.zip
 sudo cp -r config/* /etc/teddycloud/ || true
 
 # --- 9. Systemd-Service für TeddyCloud ---
-cat > /etc/systemd/system/teddycloud.service <<'EOF'
-[Unit]
-Description=TeddyCloud Server
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/teddycloud --config /etc/teddycloud/config.json
-Restart=always
-User=root
-WorkingDirectory=/etc/teddycloud
-
-[Install]
-WantedBy=multi-user.target
-EOF
+fetch_or_copy "teddycloud.service" "/etc/systemd/system/teddycloud.service"
 
 systemctl daemon-reload
 systemctl enable teddycloud.service
