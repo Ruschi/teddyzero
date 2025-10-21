@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== TeddyCloud Access-Point Setup (mit Imager-WLAN) ==="
+echo "=== TeddyCloud Pi Zero W2 Setup ==="
 
 # --- Root Check ---
 if [ "$EUID" -ne 0 ]; then
@@ -39,8 +39,7 @@ chmod 600 "$WLAN1_CONF"
 # --- 3. Notwendige Pakete installieren ---
 apt install -y hostapd dnsmasq git build-essential \
   libssl-dev libcurl4-openssl-dev libpugixml-dev libspdlog-dev \
-  zlib1g-dev libmicrohttpd-dev wget dhcpcd5 isc-dhcp-client \
-  protobuf-c-compiler libprotobuf-c-dev faketime npm nodejs
+  zlib1g-dev libmicrohttpd-dev wget unzip dhcpcd5 isc-dhcp-client
 
 systemctl stop hostapd || true
 systemctl stop dnsmasq || true
@@ -105,7 +104,7 @@ EOF
 systemctl daemon-reload
 systemctl enable wlan1-up.service
 
-# --- 7. TeddyCloud installieren ---
+# --- 7. TeddyCloud Binary bauen (nur Binary!) ---
 if [ ! -d /opt/teddycloud ]; then
   git clone https://github.com/toniebox-reverse-engineering/teddycloud.git /opt/teddycloud
 fi
@@ -113,17 +112,32 @@ fi
 cd /opt/teddycloud
 git submodule update --init --recursive
 
-# Build TeddyCloud und Web
-make clean || true
+# Makefile automatisch anpassen: Web-Ziel überspringen
+echo "=== Anpassung Makefile: Web-Build wird übersprungen ==="
+MAKEFILE_ORIG=$(mktemp)
+cp Makefile "$MAKEFILE_ORIG"
+sed -i 's/^all: teddycloud web$/all: teddycloud/' Makefile
+
+# Binary bauen
 make -j$(nproc)
 
-# Binary und Web kopieren
-sudo cp teddycloud /usr/local/bin/teddycloud
-sudo mkdir -p /etc/teddycloud/web
-sudo cp -r teddycloud_web/* /etc/teddycloud/web/
-sudo cp -r config/* /etc/teddycloud/
+# Original-Makefile wiederherstellen
+mv "$MAKEFILE_ORIG" Makefile
+echo "=== Makefile wiederhergestellt ==="
 
-# --- 8. Systemd-Service ---
+sudo cp teddycloud /usr/local/bin/teddycloud
+
+# --- 8. Fertige Web-App herunterladen und installieren ---
+WEB_URL="https://github.com/Ruschi/teddycloud_web/releases/latest/download/web-build.zip"
+sudo mkdir -p /etc/teddycloud/web
+wget -O /tmp/web-build.zip "$WEB_URL"
+sudo unzip -o /tmp/web-build.zip -d /etc/teddycloud/web
+rm /tmp/web-build.zip
+
+# Konfiguration kopieren
+sudo cp -r config/* /etc/teddycloud/ || true
+
+# --- 9. Systemd-Service für TeddyCloud ---
 cat > /etc/systemd/system/teddycloud.service <<'EOF'
 [Unit]
 Description=TeddyCloud Server
@@ -133,14 +147,13 @@ After=network.target
 ExecStart=/usr/local/bin/teddycloud --config /etc/teddycloud/config.json
 Restart=always
 User=root
-
-[Install]
-WantedBy=multi-user.target
+WorkingDirectory=/etc/teddycloud
 EOF
 
+systemctl daemon-reload
 systemctl enable teddycloud.service
 
-# --- 9. Dienste aktivieren ---
+# --- 10. Dienste aktivieren ---
 systemctl unmask hostapd
 systemctl enable hostapd
 systemctl enable dnsmasq
@@ -148,8 +161,7 @@ systemctl enable dnsmasq
 echo "=== ✅ Setup abgeschlossen ==="
 echo "AP: wlan0=PiCloud, DNS-Rewrite aktiv."
 echo "WLAN1 nutzt dein Imager-WLAN für Internetzugang."
-echo "Kein NAT."
-
+echo "TeddyCloud Server läuft mit fertiger Web-App."
 read -p "Jetzt neustarten? (y/N): " ANS
 if [[ "$ANS" =~ ^[Yy]$ ]]; then
   reboot
