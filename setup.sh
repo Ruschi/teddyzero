@@ -3,7 +3,7 @@ set -e
 
 ### TeddyCloud AP Setup für Raspberry Pi OS Lite (64-bit)
 ### Nutzt WLAN-Daten, die der Raspberry Pi Imager bereits geschrieben hat.
-### Kein Passwort oder SSID im Script gespeichert!
+### Kein Passwort oder SSID im Script oder Repo.
 
 echo "=== TeddyCloud Access-Point Setup (mit Imager-WLAN-Konfiguration) ==="
 
@@ -119,14 +119,22 @@ systemctl daemon-reload
 systemctl enable wlan1-up.service
 
 # --- 7. TeddyCloud installieren ---
+echo "Installiere TeddyCloud (nativ, inklusive Submodule und Build)..."
 if [ ! -d /opt/teddycloud ]; then
   git clone --recurse-submodules https://github.com/toniebox-reverse-engineering/teddycloud.git /opt/teddycloud
-  cd /opt/teddycloud && mkdir build && cd build
-  cmake ..
-  make -j$(nproc)
-  make install
 fi
 
+cd /opt/teddycloud
+git submodule update --init --recursive
+
+# Build im separaten Ordner
+mkdir -p build
+cd build
+cmake ..
+make -j$(nproc)
+make install
+
+# Konfiguration TeddyCloud
 mkdir -p /etc/teddycloud
 cp /opt/teddycloud/config/config.json /etc/teddycloud/config.json || true
 
