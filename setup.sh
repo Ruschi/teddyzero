@@ -112,20 +112,14 @@ fi
 cd /opt/teddycloud
 git submodule update --init --recursive
 
-# Makefile automatisch anpassen: Web-Ziel überspringen
-echo "=== Anpassung Makefile: Web-Build wird übersprungen ==="
-MAKEFILE_ORIG=$(mktemp)
-cp Makefile "$MAKEFILE_ORIG"
-sed -i 's/^all: teddycloud web$/all: teddycloud/' Makefile
 
 # Binary bauen
-make -j$(nproc)
+make -j$(nproc) bin/teddycloud
 
-# Original-Makefile wiederherstellen
-mv "$MAKEFILE_ORIG" Makefile
-echo "=== Makefile wiederhergestellt ==="
 
-sudo cp teddycloud /usr/local/bin/teddycloud
+sudo cp bin/teddycloud /usr/local/bin/teddycloud
+sudo chmod +x /usr/local/bin/teddycloud
+
 
 # --- 8. Fertige Web-App herunterladen und installieren ---
 WEB_URL="https://github.com/Ruschi/teddycloud_web/releases/latest/download/web-build.zip"
@@ -148,6 +142,9 @@ ExecStart=/usr/local/bin/teddycloud --config /etc/teddycloud/config.json
 Restart=always
 User=root
 WorkingDirectory=/etc/teddycloud
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
